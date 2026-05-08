@@ -93,6 +93,12 @@ wealth-blueprint-pro/
 - Tax calculations are simplified and should not be used for actual tax planning
 - Investment projections are hypothetical and may not reflect actual outcomes
 
+## GitHub Pages
+
+Live site: [https://mleggo1.github.io/Wealth-Blueprint-Report/](https://mleggo1.github.io/Wealth-Blueprint-Report/)
+
+After pushing, enable **Settings → Pages → Build and deployment → Source: GitHub Actions**. The workflow `.github/workflows/deploy-github-pages.yml` builds with `BASE_URL=/Wealth-Blueprint-Report/` and deploys the `dist` folder.
+
 ## Push to GitHub
 
 1. Create a **new empty** repository on GitHub (no README/license), e.g. `NEWWealthblueprint-report`.
