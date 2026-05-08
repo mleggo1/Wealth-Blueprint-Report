@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import etfMetadataData from '../data/etf-metadata.json';
+import etfListData from '../data/etfs.json';
 import { formatNumberWithCommas, parseFormattedNumber } from '../utils/formatCurrency';
 import {
   ETF_COMFORT_SCENARIOS,
@@ -23,6 +24,11 @@ import { PRODUCT_EXAMPLE_NOTICE, INVESTMENT_EDUCATOR_NOTICE } from '../constants
 import { notifyReportRefresh } from '../hooks/useReportData';
 
 const etfMetadata = etfMetadataData;
+const ETF_LIST_NAME = Object.fromEntries(etfListData.map((e) => [e.symbol, e.name]));
+
+function fullEtfName(symbol) {
+  return ETF_LIST_NAME[symbol] || etfMetadata[symbol]?.description?.split('.')[0]?.trim() || symbol;
+}
 
 export default function ExampleETFMix() {
   const [comfortScenario, setComfortScenario] = useState('growthWeighted');
@@ -67,11 +73,16 @@ export default function ExampleETFMix() {
     { name: 'Defensive-style (example)', value: defensiveAllocation },
   ];
 
-  const allocationData = selectedMix.map((etf) => ({
-    name: etfMetadata[etf.symbol]?.name || etf.symbol,
-    allocation: etf.allocation,
-    amount: (annualInvest * etf.allocation) / 100,
-  }));
+  const allocationData = selectedMix.map((etf) => {
+    const title = fullEtfName(etf.symbol);
+    return {
+      name: `${etf.symbol} — ${title}`,
+      shortLabel: etf.symbol,
+      fullName: title,
+      allocation: etf.allocation,
+      amount: (annualInvest * etf.allocation) / 100,
+    };
+  });
 
   return (
     <div>
@@ -157,14 +168,25 @@ export default function ExampleETFMix() {
 
       <div className="bg-slate-50 rounded-2xl p-6 mb-8 border border-slate-100">
         <h3 className="text-lg font-semibold text-wb-navy mb-4">Example weights by holding</h3>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={allocationData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
-            <YAxis />
-            <Tooltip formatter={(value) => String(value) + '%'} />
+        <ResponsiveContainer width="100%" height={340}>
+          <BarChart data={allocationData} margin={{ left: 8, right: 16, bottom: 120, top: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="name"
+              interval={0}
+              angle={-32}
+              textAnchor="end"
+              height={110}
+              tick={{ fontSize: 10 }}
+              tickMargin={8}
+            />
+            <YAxis width={44} tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} label={{ value: 'Weight %', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }} />
+            <Tooltip
+              formatter={(value) => [`${value}%`, 'Weight']}
+              labelFormatter={(_label, payload) => payload?.[0]?.payload?.name ?? ''}
+            />
             <Legend />
-            <Bar dataKey="allocation" fill="#0c4a6e" />
+            <Bar dataKey="allocation" fill="#0c4a6e" name="Weight %" />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -172,18 +194,21 @@ export default function ExampleETFMix() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {selectedMix.map((etf) => {
           const metadata = etfMetadata[etf.symbol];
+          const title = fullEtfName(etf.symbol);
           const amount = (annualInvest * etf.allocation) / 100;
           return (
             <div
               key={etf.symbol}
               className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm"
             >
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-wb-navy">{etf.symbol}</h4>
-                <span className="text-sm font-bold text-amber-800">{etf.allocation}%</span>
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div>
+                  <h4 className="font-semibold text-wb-navy">{etf.symbol}</h4>
+                  <p className="text-sm text-slate-800 font-medium leading-snug mt-0.5">{title}</p>
+                </div>
+                <span className="text-sm font-bold text-amber-800 shrink-0">{etf.allocation}%</span>
               </div>
-              <p className="text-sm text-slate-600 mb-2">{metadata?.name || 'ETF'}</p>
-              <p className="text-xs text-slate-500 mb-2">{metadata?.description || ''}</p>
+              <p className="text-xs text-slate-500 mb-2 leading-relaxed">{metadata?.description || ''}</p>
               <div className="mt-3 pt-3 border-t border-slate-100">
                 <p className="text-xs text-slate-500">Illustrative annual slice</p>
                 <p className="text-lg font-bold text-slate-900">A${amount.toLocaleString()}</p>
@@ -218,13 +243,14 @@ export default function ExampleETFMix() {
             <tbody className="divide-y divide-slate-100">
               {selectedMix.map((etf) => {
                 const metadata = etfMetadata[etf.symbol];
+                const title = fullEtfName(etf.symbol);
                 const amount = (annualInvest * etf.allocation) / 100;
                 return (
                   <tr key={etf.symbol}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">
                       {etf.symbol}
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-800">{metadata?.name || '—'}</td>
+                    <td className="px-6 py-4 text-sm text-slate-800">{title}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900 text-right">
                       {etf.allocation}%
                     </td>

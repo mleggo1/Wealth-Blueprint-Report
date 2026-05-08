@@ -5,10 +5,12 @@ import FullReport from './FullReport';
 import { FOOTER_SHORT } from '../constants/disclaimers';
 import { PREPARER_NAME } from '../constants/brand';
 
-/** Body image stops above this band so footer text does not cover content. */
-const FOOTER_RESERVE_PT = 82;
-const MARGIN_TOP_PT = 32;
-const MARGIN_X_PT = 24;
+/** Reserved at bottom of each page for footer text only (must clear tallest body slice). */
+const FOOTER_RESERVE_PT = 108;
+/** Gap between bottom of body image and start of footer band. */
+const BODY_FOOTER_GAP_PT = 14;
+const MARGIN_TOP_PT = 28;
+const MARGIN_X_PT = 22;
 
 export default function PDFExport() {
   const pdfRef = useRef(null);
@@ -33,23 +35,30 @@ export default function PDFExport() {
     });
 
     const maxW = pageWidth - MARGIN_X_PT * 2;
-    const lineH = 7;
+    const footerBandTop = pageHeight - FOOTER_RESERVE_PT;
+    const lineH = 6.2;
 
     for (let i = 1; i <= total; i++) {
       pdf.setPage(i);
-      pdf.setFontSize(6);
-      pdf.setTextColor(75);
+      pdf.setFontSize(5.5);
+      pdf.setTextColor(72);
       const lines = pdf.splitTextToSize(FOOTER_SHORT, maxW);
-      const preparedY = pageHeight - 18;
-      const pageY = pageHeight - 10;
-      const disclaimerEnd = preparedY - 4;
-      const disclaimerStart = Math.max(MARGIN_TOP_PT + 8, disclaimerEnd - (lines.length - 1) * lineH);
-      pdf.text(lines, MARGIN_X_PT, disclaimerStart);
+
+      const pageY = pageHeight - 9;
+      const preparedY = pageHeight - 22;
+      const disclaimerBottom = preparedY - 10;
+      let disclaimerFirst = disclaimerBottom - (lines.length - 1) * lineH;
+
+      if (disclaimerFirst < footerBandTop + 6) {
+        disclaimerFirst = footerBandTop + 6;
+      }
+
+      pdf.text(lines, MARGIN_X_PT, disclaimerFirst);
 
       pdf.setFontSize(7);
-      pdf.setTextColor(55);
+      pdf.setTextColor(48);
       pdf.text(`Prepared by ${PREPARER_NAME} · ${dateStr}`, MARGIN_X_PT, preparedY);
-      pdf.text(`Page ${i} of ${total}`, pageWidth - MARGIN_X_PT - 62, pageY);
+      pdf.text(`Page ${i} of ${total}`, pageWidth - MARGIN_X_PT - 58, pageY);
     }
   };
 
@@ -76,7 +85,8 @@ export default function PDFExport() {
       const pageHeight = pdf.internal.pageSize.getHeight();
       const imgWidth = pageWidth - MARGIN_X_PT * 2;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      const contentHeight = pageHeight - MARGIN_TOP_PT - FOOTER_RESERVE_PT;
+      const contentHeight =
+        pageHeight - MARGIN_TOP_PT - FOOTER_RESERVE_PT - BODY_FOOTER_GAP_PT;
       const ratio = imgWidth / canvas.width;
 
       if (imgHeight <= contentHeight) {
@@ -155,7 +165,7 @@ export default function PDFExport() {
         <p className="font-semibold text-wb-navy mb-2">Export notes</p>
         <ul className="list-disc pl-5 space-y-1">
           <li>Cover page, education notice, all report sections, and “Before You Act” are included.</li>
-          <li>Footer text is drawn below the report image on every page so content is not covered.</li>
+          <li>Each page leaves space below the report image before the disclaimer so text is not covered.</li>
           <li>For best print layout, use the in-browser print dialog on the Report tab if needed.</li>
         </ul>
       </div>

@@ -13,6 +13,10 @@ const SPLIT_THRESHOLD = 7;
 const CACHE_KEY = 'wealthBlueprint_etfDataCache';
 const CACHE_TIMESTAMP_KEY = 'wealthBlueprint_etfDataTimestamp';
 const CACHE_DURATION = 24 * 60 * 60 * 1000;
+const REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+
+/** In-memory copy for instant tab revisits in the same session */
+let sessionEtfMemory = null;
 
 const formatRefreshTimestamp = (date = new Date()) => {
   const day = String(date.getDate()).padStart(2, '0');
@@ -63,26 +67,26 @@ const fetchYahooPayload = async (symbol, { interval, range }, signal) => {
       if (!wrap.contents) throw new Error('allorigins empty contents');
       return parseChartBody(JSON.parse(wrap.contents));
     },
-    async () => {
-      const res = await fetch(target, {
-        signal,
-        mode: 'cors',
-        headers: { Accept: 'application/json' },
-      });
-      if (!res.ok) throw new Error(`direct ${res.status}`);
-      return parseChartBody(await res.json());
-    },
   ];
 
-  let lastErr;
-  for (const fn of attempts) {
-    try {
-      return await fn();
-    } catch (e) {
-      lastErr = e;
+  try {
+    return await Promise.any(attempts.map((fn) => fn()));
+  } catch (e) {
+    if (e instanceof AggregateError && e.errors?.length) {
+      try {
+        const res = await fetch(target, {
+          signal,
+          mode: 'cors',
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) throw new Error(`direct ${res.status}`);
+        return parseChartBody(await res.json());
+      } catch {
+        throw e.errors[e.errors.length - 1] || e;
+      }
     }
+    throw e;
   }
-  throw lastErr || new Error('All Yahoo fetch strategies failed');
 };
 
 const extractPricePairs = (chartResult) => {
@@ -192,13 +196,18 @@ async function fetchRemoteFallback(signal) {
 }
 
 const loadCachedData = () => {
+  if (sessionEtfMemory && typeof sessionEtfMemory === 'object') {
+    return sessionEtfMemory;
+  }
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     const timestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
     if (cached && timestamp) {
       const age = Date.now() - parseInt(timestamp, 10);
       if (age < CACHE_DURATION) {
-        return JSON.parse(cached);
+        const parsed = JSON.parse(cached);
+        sessionEtfMemory = parsed;
+        return parsed;
       }
     }
   } catch (e) {
@@ -208,6 +217,7 @@ const loadCachedData = () => {
 };
 
 const saveCachedData = (data) => {
+  sessionEtfMemory = data;
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(data));
     localStorage.setItem(CACHE_TIMESTAMP_KEY, String(Date.now()));
@@ -217,8 +227,12 @@ const saveCachedData = (data) => {
 };
 
 export default function LiveETFPrices() {
-  const [etfData, setEtfData] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [etfData, setEtfData] = useState(() => loadCachedData() || {});
+  const [loading, setLoading] = useState(() => {
+    const d = loadCachedData();
+    return !etfConfig.some(({ symbol }) => d?.[symbol]?.prices?.length > 0);
+  });
+  const [refreshing, setRefreshing] = useState(false);
   const [errors, setErrors] = useState({});
   const [lastUpdated, setLastUpdated] = useState(null);
   const [lastRefreshTimestamp, setLastRefreshTimestamp] = useState(null);
@@ -231,24 +245,18 @@ export default function LiveETFPrices() {
     etfDataRef.current = etfData;
   }, [etfData]);
 
-  useEffect(() => {
-    const cached = loadCachedData();
-    if (cached) {
-      setEtfData(cached);
-      setLoading(false);
-      const ts = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-      if (ts) {
-        setLastRefreshTimestamp(formatRefreshTimestamp(new Date(parseInt(ts, 10))));
-      }
-    }
-  }, []);
-
-  const loadData = useCallback(async ({ signal } = {}) => {
-    setLoading(true);
-    setErrors({});
+  const loadData = useCallback(async ({ signal, silent = false } = {}) => {
     const prev = { ...etfDataRef.current };
+    const hasCharts = etfConfig.some(({ symbol }) => prev[symbol]?.prices?.length > 0);
+    if (silent && hasCharts) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setErrors({});
 
     try {
+      const fallbackPromise = fetchRemoteFallback(signal);
       const liveResults = await Promise.allSettled(
         etfConfig.map(({ symbol }) => fetchYahooSeries(symbol, signal))
       );
@@ -285,7 +293,7 @@ export default function LiveETFPrices() {
       );
 
       if (!hasAnySeries && successCount === 0) {
-        const remote = await fetchRemoteFallback(signal);
+        const remote = await fallbackPromise;
         if (remote && typeof remote === 'object') {
           etfConfig.forEach(({ symbol }) => {
             const row = remote[symbol];
@@ -338,6 +346,7 @@ export default function LiveETFPrices() {
     } finally {
       if (!signal?.aborted) {
         setLoading(false);
+        setRefreshing(false);
       }
     }
   }, []);
@@ -347,14 +356,24 @@ export default function LiveETFPrices() {
 
   useEffect(() => {
     const controller = new AbortController();
-    loadData({ signal: controller.signal });
+    const initial = etfDataRef.current;
+    const hasInitial = etfConfig.some(
+      ({ symbol }) => initial[symbol]?.prices?.length > 0
+    );
+    if (hasInitial) {
+      const ts = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+      if (ts) {
+        setLastRefreshTimestamp(formatRefreshTimestamp(new Date(parseInt(ts, 10))));
+      }
+    }
+    loadData({ signal: controller.signal, silent: hasInitial });
     return () => controller.abort();
   }, [loadData]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      loadDataRef.current();
-    }, 5 * 60 * 1000);
+      loadDataRef.current({ silent: true });
+    }, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, []);
 
@@ -375,6 +394,7 @@ export default function LiveETFPrices() {
   };
 
   const dataAsAtLabel = lastUpdated || 'n/a';
+  const hasChartData = etfConfig.some(({ symbol }) => etfData[symbol]?.prices?.length > 0);
 
   return (
     <div className="space-y-6">
@@ -402,11 +422,11 @@ export default function LiveETFPrices() {
             </span>
             <button
               type="button"
-              onClick={() => loadData()}
-              disabled={loading}
+              onClick={() => loadData({ silent: hasChartData })}
+              disabled={(loading && !hasChartData) || refreshing}
               className="inline-flex justify-center items-center rounded-full border border-teal-400/60 bg-teal-400/10 px-4 py-2 text-xs font-semibold text-teal-100 backdrop-blur transition hover:border-teal-300 hover:bg-teal-300/15 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-800/60 disabled:text-slate-500"
             >
-              {loading ? 'Refreshing…' : 'Refresh data'}
+              {loading && !hasChartData ? 'Loading…' : refreshing ? 'Updating…' : 'Refresh data'}
             </button>
           </div>
         </div>
@@ -476,7 +496,7 @@ export default function LiveETFPrices() {
                   </div>
                   {data && data.prices && data.prices.length > 0 ? (
                     <div
-                      className="h-48 cursor-pointer hover:opacity-90 transition-opacity md:cursor-default"
+                      className="h-48 cursor-pointer hover:opacity-90 transition-opacity"
                       onClick={() => {
                         setSelectedETF(etf);
                         setIsModalOpen(true);
@@ -574,7 +594,7 @@ export default function LiveETFPrices() {
 
       <p className="text-xs text-charcoal-700 text-right">
         Source: Yahoo Finance (when available) · Fallback: public ETF dashboard dataset · Cached
-        locally · Auto-refresh every 5 minutes
+        locally · Auto-refresh every 2 minutes
         {lastUpdated && ` · Data as at: ${lastUpdated}`}
       </p>
 

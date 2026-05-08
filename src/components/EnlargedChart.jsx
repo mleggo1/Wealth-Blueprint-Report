@@ -71,7 +71,7 @@ export const EnlargedChart = ({ timeframe, data }) => {
 
   if (!data) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
+      <div className="flex items-center justify-center h-full min-h-[240px]">
         <div className="text-center">
           <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent"></div>
           <p className="mt-4 text-sm text-gray-400">Loading chart...</p>
@@ -82,7 +82,7 @@ export const EnlargedChart = ({ timeframe, data }) => {
 
   if (data.error) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
+      <div className="flex items-center justify-center h-full min-h-[240px]">
         <div className="text-center text-red-500">
           <p className="text-sm">Data unavailable: {data.error}</p>
         </div>
@@ -93,7 +93,7 @@ export const EnlargedChart = ({ timeframe, data }) => {
   const filtered = filterByTimeframe(data.prices, timeframe);
   if (!filtered.length) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
+      <div className="flex items-center justify-center h-full min-h-[240px]">
         <div className="text-center text-gray-400">
           <p className="text-sm">Not enough data for {timeframe}</p>
         </div>
@@ -130,8 +130,8 @@ export const EnlargedChart = ({ timeframe, data }) => {
   };
 
   return (
-    <div className="flex flex-col h-full min-h-[500px]">
-      <div className="mb-4 flex items-center justify-between">
+    <div className="flex flex-col h-full min-h-[280px]">
+      <div className="mb-2 flex items-center justify-between shrink-0">
         <div className="text-sm text-gray-600">
           <span className="text-gray-500">Period return: </span>
           <span className={cumulativeReturn >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
@@ -139,8 +139,9 @@ export const EnlargedChart = ({ timeframe, data }) => {
           </span>
         </div>
       </div>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={filtered} margin={{ top: 20, right: 30, bottom: 60, left: 20 }}>
+      <div className="flex-1 min-h-[220px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={filtered} margin={{ top: 12, right: 16, bottom: 56, left: 8 }}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.8} />
@@ -161,11 +162,11 @@ export const EnlargedChart = ({ timeframe, data }) => {
           <YAxis
             domain={['auto', 'auto']}
             tickFormatter={(value) => formatCurrency(value, data.currency)}
-            tick={{ fontSize: 12, fill: '#6b7280' }}
+            tick={{ fontSize: 11, fill: '#6b7280' }}
             stroke="#e5e7eb"
             axisLine={{ stroke: '#e5e7eb' }}
             tickLine={{ stroke: '#e5e7eb' }}
-            width={80}
+            width={72}
           />
           <Tooltip content={<CustomTooltip />} />
           <Line
@@ -177,7 +178,8 @@ export const EnlargedChart = ({ timeframe, data }) => {
             activeDot={{ r: 6, strokeWidth: 0, fill: '#3b82f6' }}
           />
         </LineChart>
-      </ResponsiveContainer>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 };

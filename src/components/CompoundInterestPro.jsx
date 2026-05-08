@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { formatNumberWithCommas, parseFormattedNumber } from '../utils/formatCurrency';
+import { formatCompactAud } from '../utils/formatCompactAud';
 import { notifyReportRefresh } from '../hooks/useReportData';
 
 // Simulation function (adapted from Ultimate Target)
@@ -292,29 +293,59 @@ export default function CompoundInterestPro() {
       </div>
 
       {/* Chart */}
-      <div className="bg-gray-50 rounded-lg p-6 mb-8">
+      <div className="bg-gray-50 rounded-lg p-6 mb-8 pl-2 pr-4">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Balance Over Time (Hypothetical Projection)</h3>
-        <ResponsiveContainer width="100%" height={400}>
-          <LineChart data={simulation.rows}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="age" label={{ value: 'Age', position: 'insideBottom', offset: -5 }} />
-            <YAxis label={{ value: 'Balance (A$)', angle: -90, position: 'insideLeft' }} />
-            <Tooltip formatter={(value) => fmtAUD(value)} />
-            <Legend />
+        <ResponsiveContainer width="100%" height={420}>
+          <LineChart
+            data={simulation.rows}
+            margin={{ left: 8, right: 28, top: 20, bottom: 52 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="age"
+              tick={{ fontSize: 12 }}
+              tickMargin={10}
+              label={{
+                value: 'Age (years)',
+                position: 'bottom',
+                offset: 36,
+                style: { textAnchor: 'middle', fill: '#374151', fontSize: 13 },
+              }}
+            />
+            <YAxis
+              width={76}
+              tick={{ fontSize: 11 }}
+              tickMargin={10}
+              tickFormatter={(v) => formatCompactAud(v)}
+              label={{
+                value: 'Balance',
+                angle: -90,
+                position: 'insideLeft',
+                style: { textAnchor: 'middle', fill: '#374151', fontSize: 13 },
+                offset: 2,
+              }}
+            />
+            <Tooltip formatter={(value) => fmtAUD(value)} labelFormatter={(l) => `Age ${l}`} />
+            <Legend verticalAlign="top" height={28} wrapperStyle={{ paddingBottom: 8 }} />
             <ReferenceLine
               x={profile.retirementAge}
               stroke="#f59e0b"
               strokeWidth={2}
               strokeDasharray="5 5"
-              label={{ value: `Retirement Age ${profile.retirementAge}`, position: 'top' }}
+              label={{
+                value: `Retirement (${profile.retirementAge})`,
+                position: 'top',
+                fill: '#b45309',
+                fontSize: 11,
+              }}
             />
             <Line
               type="monotone"
               dataKey="balance"
-              stroke="#3b82f6"
+              stroke="#0d9488"
               strokeWidth={3}
               dot={false}
-              name="Projected Balance"
+              name="Projected balance (illustrative)"
             />
           </LineChart>
         </ResponsiveContainer>

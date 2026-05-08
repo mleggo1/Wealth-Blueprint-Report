@@ -21,10 +21,14 @@ export default function ComplianceChecker() {
     window.addEventListener('storage', bump);
     window.addEventListener('wealthBlueprint-report-refresh', bump);
     window.addEventListener('wealthBlueprint-notes-updated', bump);
+    window.addEventListener('focus', bump);
+    document.addEventListener('visibilitychange', bump);
     return () => {
       window.removeEventListener('storage', bump);
       window.removeEventListener('wealthBlueprint-report-refresh', bump);
       window.removeEventListener('wealthBlueprint-notes-updated', bump);
+      window.removeEventListener('focus', bump);
+      document.removeEventListener('visibilitychange', bump);
     };
   }, []);
 
