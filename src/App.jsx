@@ -47,16 +47,19 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 print:bg-white">
-      <header className="border-b border-slate-200/80 bg-white/95 backdrop-blur sticky top-0 z-50 print:hidden">
+    <div className="min-h-screen bg-wb-ocean text-charcoal-900 print:bg-white">
+      <header className="border-b border-navy-900/10 bg-white/90 backdrop-blur-md sticky top-0 z-50 shadow-sm shadow-navy-900/5 print:hidden">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-800/90">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gold-600">
               {PRODUCT_SUBTITLE}
             </p>
-            <h1 className="text-xl md:text-2xl font-bold text-wb-navy">{PRODUCT_NAME}</h1>
+            <h1 className="text-xl md:text-2xl font-bold">
+              <span className="logo-wealth">{PRODUCT_NAME}</span>
+              <span className="text-navy-900"> — Report builder</span>
+            </h1>
           </div>
-          <p className="text-xs text-slate-500 max-w-md">
+          <p className="text-xs text-charcoal-700 max-w-md leading-relaxed">
             Updated to reduce financial advice and compliance risk. Education and coaching only.
           </p>
         </div>
@@ -69,8 +72,8 @@ function App() {
                 onClick={() => setCurrentScreen(item.id)}
                 className={`px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
                   currentScreen === item.id
-                    ? 'bg-wb-navy text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    ? 'bg-navy-900 text-white shadow-md shadow-navy-900/20'
+                    : 'bg-white/80 text-navy-800 border border-navy-200/80 hover:bg-ocean-50 hover:border-teal-600/30'
                 }`}
               >
                 {item.label}
@@ -82,7 +85,7 @@ function App() {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         <div
-          className={`rounded-2xl border border-slate-200/80 bg-slate-50/40 p-6 md:p-8 shadow-sm mb-8 print:border-0 print:shadow-none print:bg-white ${
+          className={`rounded-2xl border border-white/60 bg-white/70 backdrop-blur-sm p-6 md:p-8 shadow-lg shadow-navy-900/5 mb-8 print:border-0 print:shadow-none print:bg-white ${
             currentScreen === 'report' ? 'print:block' : 'print:hidden'
           }`}
         >

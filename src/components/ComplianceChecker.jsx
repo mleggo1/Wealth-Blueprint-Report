@@ -6,9 +6,10 @@ import { normalizeEtfMixSaved } from '../data/etfScenarios';
 function readJSON(key) {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : {};
+    if (!raw) return null;
+    return JSON.parse(raw);
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -29,18 +30,26 @@ export default function ComplianceChecker() {
 
   const findings = useMemo(() => {
     void tick;
-    const profile = readJSON('wealthBlueprint_profile');
+    const profile = readJSON('wealthBlueprint_profile') || {};
+    const cashflow = readJSON('wealthBlueprint_cashflow');
+    const compoundInputs = readJSON('wealthBlueprint_compoundInputs');
     const coachingNotes = localStorage.getItem('wealthBlueprint_coachingNotes') || '';
     const educationNextSteps = localStorage.getItem('wealthBlueprint_educationNextSteps') || '';
     const appendixNotes = localStorage.getItem('wealthBlueprint_appendixNotes') || '';
     const proQuestionsExtra = localStorage.getItem('wealthBlueprint_proQuestionsExtra') || '';
-    const etf = normalizeEtfMixSaved(readJSON('wealthBlueprint_etfMix'));
+    const etf = normalizeEtfMixSaved(readJSON('wealthBlueprint_etfMix') || {});
 
     const sources = {
       'App title (static)': `${PRODUCT_NAME} ${PRODUCT_SUBTITLE}`,
-      'Client name': profile.name || '',
-      'Occupation / context': profile.occupation || '',
-      'Lifestyle & goals': profile.lifestyleGoals || '',
+      'Client name': String(profile.name ?? ''),
+      'Age': String(profile.age ?? ''),
+      'Retirement age': String(profile.retirementAge ?? ''),
+      'Annual income (stated)': String(profile.annualIncome ?? ''),
+      'Passive income goal (stated)': String(profile.passiveIncomeGoal ?? ''),
+      'Occupation / context': String(profile.occupation ?? ''),
+      'Lifestyle & goals': String(profile.lifestyleGoals ?? ''),
+      'Cash flow lab (saved fields)': JSON.stringify(cashflow ?? {}),
+      'Compounding lab (saved fields)': JSON.stringify(compoundInputs ?? {}),
       'Coaching notes': coachingNotes,
       'Education next steps': educationNextSteps,
       'Appendix notes': appendixNotes,

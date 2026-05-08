@@ -5,6 +5,11 @@ import FullReport from './FullReport';
 import { FOOTER_SHORT } from '../constants/disclaimers';
 import { PREPARER_NAME } from '../constants/brand';
 
+/** Body image stops above this band so footer text does not cover content. */
+const FOOTER_RESERVE_PT = 82;
+const MARGIN_TOP_PT = 32;
+const MARGIN_X_PT = 24;
+
 export default function PDFExport() {
   const pdfRef = useRef(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -27,15 +32,24 @@ export default function PDFExport() {
       year: 'numeric',
     });
 
+    const maxW = pageWidth - MARGIN_X_PT * 2;
+    const lineH = 7;
+
     for (let i = 1; i <= total; i++) {
       pdf.setPage(i);
-      pdf.setFontSize(6.5);
-      pdf.setTextColor(90);
-      const lines = pdf.splitTextToSize(FOOTER_SHORT, pageWidth - 40);
-      pdf.text(lines, 20, pageHeight - 42);
+      pdf.setFontSize(6);
+      pdf.setTextColor(75);
+      const lines = pdf.splitTextToSize(FOOTER_SHORT, maxW);
+      const preparedY = pageHeight - 18;
+      const pageY = pageHeight - 10;
+      const disclaimerEnd = preparedY - 4;
+      const disclaimerStart = Math.max(MARGIN_TOP_PT + 8, disclaimerEnd - (lines.length - 1) * lineH);
+      pdf.text(lines, MARGIN_X_PT, disclaimerStart);
+
       pdf.setFontSize(7);
-      pdf.text(`Page ${i} of ${total}`, pageWidth - 78, pageHeight - 22);
-      pdf.text(`Prepared by ${PREPARER_NAME} · ${dateStr}`, 20, pageHeight - 22);
+      pdf.setTextColor(55);
+      pdf.text(`Prepared by ${PREPARER_NAME} · ${dateStr}`, MARGIN_X_PT, preparedY);
+      pdf.text(`Page ${i} of ${total}`, pageWidth - MARGIN_X_PT - 62, pageY);
     }
   };
 
@@ -57,43 +71,43 @@ export default function PDFExport() {
         windowHeight: element.scrollHeight,
       });
 
-      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 24;
-      const imgWidth = pageWidth - margin * 2;
+      const imgWidth = pageWidth - MARGIN_X_PT * 2;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const contentHeight = pageHeight - MARGIN_TOP_PT - FOOTER_RESERVE_PT;
+      const ratio = imgWidth / canvas.width;
 
-      if (imgHeight <= pageHeight - margin * 2) {
-        pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
+      if (imgHeight <= contentHeight) {
+        const imgData = canvas.toDataURL('image/png');
+        pdf.addImage(imgData, 'PNG', MARGIN_X_PT, MARGIN_TOP_PT, imgWidth, imgHeight);
       } else {
-        let remainingHeight = imgHeight;
-        const ratio = imgWidth / canvas.width;
-        const sliceHeight = (pageHeight - margin * 2) / ratio;
+        const sliceHeightPx = contentHeight / ratio;
         const pageCanvas = document.createElement('canvas');
         pageCanvas.width = canvas.width;
-        pageCanvas.height = sliceHeight;
         const pageCtx = pageCanvas.getContext('2d');
         let sy = 0;
-        while (remainingHeight > 0) {
+        while (sy < canvas.height - 0.5) {
+          const srcH = Math.min(sliceHeightPx, canvas.height - sy);
+          pageCanvas.height = Math.ceil(srcH);
           pageCtx.clearRect(0, 0, pageCanvas.width, pageCanvas.height);
           pageCtx.drawImage(
             canvas,
             0,
             sy,
             canvas.width,
-            sliceHeight,
+            srcH,
             0,
             0,
             pageCanvas.width,
             pageCanvas.height
           );
           const pageImg = pageCanvas.toDataURL('image/png');
-          pdf.addImage(pageImg, 'PNG', margin, margin, imgWidth, pageHeight - margin * 2);
-          remainingHeight -= pageHeight - margin * 2;
-          sy += sliceHeight;
-          if (remainingHeight > 0) pdf.addPage();
+          const drawH = (srcH * imgWidth) / canvas.width;
+          pdf.addImage(pageImg, 'PNG', MARGIN_X_PT, MARGIN_TOP_PT, imgWidth, drawH);
+          sy += srcH;
+          if (sy < canvas.height - 0.5) pdf.addPage();
         }
       }
 
@@ -123,7 +137,7 @@ export default function PDFExport() {
           type="button"
           onClick={exportPDF}
           disabled={isGenerating}
-          className="px-6 py-3 bg-wb-navy text-white rounded-xl hover:opacity-95 disabled:bg-slate-400 font-semibold text-lg shadow-sm"
+          className="px-6 py-3 bg-navy-900 text-white rounded-xl hover:bg-navy-800 disabled:bg-slate-400 font-semibold text-lg shadow-sm"
         >
           {isGenerating ? 'Generating PDF…' : 'Download PDF report'}
         </button>
@@ -141,7 +155,7 @@ export default function PDFExport() {
         <p className="font-semibold text-wb-navy mb-2">Export notes</p>
         <ul className="list-disc pl-5 space-y-1">
           <li>Cover page, education notice, all report sections, and “Before You Act” are included.</li>
-          <li>Footer text is added on every PDF page after rendering.</li>
+          <li>Footer text is drawn below the report image on every page so content is not covered.</li>
           <li>For best print layout, use the in-browser print dialog on the Report tab if needed.</li>
         </ul>
       </div>

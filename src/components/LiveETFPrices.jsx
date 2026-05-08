@@ -1,19 +1,18 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import etfConfigData from '../data/etfs.json';
-import etfMetadataData from '../data/etf-metadata.json';
 import { MiniLineChart } from './MiniLineChart';
 import { PerformanceTable } from './PerformanceTable';
 import { ETFModal } from './ETFModal';
 import { PRODUCT_EXAMPLE_NOTICE } from '../constants/disclaimers';
 
 const etfConfig = etfConfigData;
-const etfMetadata = etfMetadataData;
 
 const YAHOO_CHART_ENDPOINT = 'https://query1.finance.yahoo.com/v8/finance/chart/';
+const REMOTE_FALLBACK_URL = 'https://etf-dashboards.vercel.app/data/etf-prices.json';
 const SPLIT_THRESHOLD = 7;
 const CACHE_KEY = 'wealthBlueprint_etfDataCache';
 const CACHE_TIMESTAMP_KEY = 'wealthBlueprint_etfDataTimestamp';
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_DURATION = 24 * 60 * 60 * 1000;
 
 const formatRefreshTimestamp = (date = new Date()) => {
   const day = String(date.getDate()).padStart(2, '0');
@@ -27,34 +26,63 @@ const formatRefreshTimestamp = (date = new Date()) => {
   return `${day}/${month}/${year}, ${displayHours}:${minutes}:${seconds} ${ampm}`;
 };
 
-const fetchYahooPayload = async (symbol, { interval, range }, signal) => {
-  const url = new URL(symbol, YAHOO_CHART_ENDPOINT);
-  url.searchParams.set('interval', interval);
-  url.searchParams.set('range', range);
-  
-  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url.toString())}`;
-  
-  let res;
-  try {
-    res = await fetch(proxyUrl, { signal, headers: { 'Accept': 'application/json' } });
-  } catch (networkError) {
-    try {
-      res = await fetch(url.toString(), { signal, mode: 'cors' });
-    } catch (directError) {
-      throw new Error(`Network error: ${networkError.message || directError.message}`);
-    }
-  }
-  
-  if (!res.ok) {
-    throw new Error(`Request failed (${res.status}): ${res.statusText}`);
-  }
-  
-  const body = await res.json();
+const parseChartBody = (body) => {
   const chartResult = body?.chart?.result?.[0];
   if (!chartResult) {
     throw new Error(body?.chart?.error?.description || 'No chart data returned');
   }
   return chartResult;
+};
+
+const fetchYahooPayload = async (symbol, { interval, range }, signal) => {
+  const url = new URL(symbol, YAHOO_CHART_ENDPOINT);
+  url.searchParams.set('interval', interval);
+  url.searchParams.set('range', range);
+  const target = url.toString();
+
+  const attempts = [
+    async () => {
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`;
+      const res = await fetch(proxyUrl, { signal, headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`allorigins raw ${res.status}`);
+      const text = await res.text();
+      return parseChartBody(JSON.parse(text));
+    },
+    async () => {
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(target)}`;
+      const res = await fetch(proxyUrl, { signal, headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`corsproxy ${res.status}`);
+      const text = await res.text();
+      return parseChartBody(JSON.parse(text));
+    },
+    async () => {
+      const wrapUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`;
+      const res = await fetch(wrapUrl, { signal });
+      if (!res.ok) throw new Error(`allorigins get ${res.status}`);
+      const wrap = await res.json();
+      if (!wrap.contents) throw new Error('allorigins empty contents');
+      return parseChartBody(JSON.parse(wrap.contents));
+    },
+    async () => {
+      const res = await fetch(target, {
+        signal,
+        mode: 'cors',
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(`direct ${res.status}`);
+      return parseChartBody(await res.json());
+    },
+  ];
+
+  let lastErr;
+  for (const fn of attempts) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('All Yahoo fetch strategies failed');
 };
 
 const extractPricePairs = (chartResult) => {
@@ -151,6 +179,18 @@ const fetchYahooSeries = async (symbol, signal) => {
   };
 };
 
+async function fetchRemoteFallback(signal) {
+  try {
+    const res = await fetch(REMOTE_FALLBACK_URL, { signal, mode: 'cors' });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json?.data ?? null;
+  } catch (e) {
+    console.warn('ETF fallback dataset unavailable', e);
+    return null;
+  }
+}
+
 const loadCachedData = () => {
   try {
     const cached = localStorage.getItem(CACHE_KEY);
@@ -186,111 +226,137 @@ export default function LiveETFPrices() {
   const [selectedETF, setSelectedETF] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Load cached data on mount
+  const etfDataRef = useRef(etfData);
+  useEffect(() => {
+    etfDataRef.current = etfData;
+  }, [etfData]);
+
   useEffect(() => {
     const cached = loadCachedData();
     if (cached) {
       setEtfData(cached);
       setLoading(false);
-      setLastRefreshTimestamp(formatRefreshTimestamp(new Date(parseInt(localStorage.getItem(CACHE_TIMESTAMP_KEY), 10))));
+      const ts = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+      if (ts) {
+        setLastRefreshTimestamp(formatRefreshTimestamp(new Date(parseInt(ts, 10))));
+      }
     }
   }, []);
 
-  const loadData = useCallback(
-    async ({ signal, allowFallback = true } = {}) => {
-      setLoading(true);
-      setErrors({});
+  const loadData = useCallback(async ({ signal } = {}) => {
+    setLoading(true);
+    setErrors({});
+    const prev = { ...etfDataRef.current };
 
-      try {
-        const liveResults = await Promise.allSettled(
-          etfConfig.map(({ symbol }) => fetchYahooSeries(symbol, signal))
-        );
+    try {
+      const liveResults = await Promise.allSettled(
+        etfConfig.map(({ symbol }) => fetchYahooSeries(symbol, signal))
+      );
 
-        if (signal?.aborted) return;
+      if (signal?.aborted) return;
 
-        const nextData = { ...etfData }; // Start with current data
-        const nextErrors = {};
-        let mostRecentPriceDate = null;
-        let hasNewData = false;
+      const nextData = { ...prev };
+      const nextErrors = {};
+      let mostRecentPriceDate = null;
+      let successCount = 0;
 
-        liveResults.forEach((result, index) => {
-          const { symbol } = etfConfig[index];
-          if (result.status === 'fulfilled') {
-            nextData[symbol] = result.value;
-            hasNewData = true;
-            const prices = result.value.prices;
-            if (prices && prices.length > 0) {
-              const lastPriceDate = prices[prices.length - 1].date;
-              if (!mostRecentPriceDate || lastPriceDate > mostRecentPriceDate) {
-                mostRecentPriceDate = lastPriceDate;
-              }
-            }
-          } else {
-            // Keep existing data for this symbol if fetch failed
-            if (!nextData[symbol]) {
-              nextErrors[symbol] = result.reason?.message || 'Failed to fetch live data';
-            } else {
-              console.warn(`Failed to refresh ${symbol}:`, result.reason?.message);
-              nextErrors[symbol] = `Refresh failed, using cached data: ${result.reason?.message}`;
+      liveResults.forEach((result, index) => {
+        const { symbol } = etfConfig[index];
+        if (result.status === 'fulfilled') {
+          nextData[symbol] = result.value;
+          successCount += 1;
+          const prices = result.value.prices;
+          if (prices?.length) {
+            const lastPriceDate = prices[prices.length - 1].date;
+            if (!mostRecentPriceDate || lastPriceDate > mostRecentPriceDate) {
+              mostRecentPriceDate = lastPriceDate;
             }
           }
-        });
-
-        // Only update if we got at least some new data, or preserve existing
-        if (hasNewData || Object.keys(nextData).length > 0) {
-          setEtfData(nextData);
-          saveCachedData(nextData); // Save to cache
+        } else if (!nextData[symbol]) {
+          nextErrors[symbol] = result.reason?.message || 'Failed to fetch live data';
+        } else {
+          console.warn(`Failed to refresh ${symbol}:`, result.reason?.message);
+          nextErrors[symbol] = `Refresh failed, using cached data: ${result.reason?.message}`;
         }
-        setErrors(nextErrors);
+      });
 
-        const refreshDataAsAtDate =
-          mostRecentPriceDate ||
-          (Object.values(nextData).length > 0 && Object.values(nextData)[0]?.prices?.length > 0
-            ? Object.values(nextData)[0].prices[Object.values(nextData)[0].prices.length - 1].date
-            : new Date().toISOString().slice(0, 10));
-        setLastUpdated(refreshDataAsAtDate);
+      const hasAnySeries = etfConfig.some(
+        ({ symbol }) => nextData[symbol]?.prices?.length > 0
+      );
 
-        const refreshTimestamp = formatRefreshTimestamp(new Date());
-        setLastRefreshTimestamp(refreshTimestamp);
-        
-        // Add timestamp to each ETF data object
-        Object.keys(nextData).forEach((symbol) => {
-          if (nextData[symbol]) {
-            nextData[symbol].dataTimestamp = new Date().toISOString();
-            nextData[symbol].dataAsAtDate = nextData[symbol].prices?.[nextData[symbol].prices.length - 1]?.date || refreshDataAsAtDate;
-          }
-        });
-      } catch (err) {
-        if (!signal?.aborted) {
-          console.error(err);
-          setErrors({ __root: err.message || "Couldn't refresh data. Using cached data. Please try again." });
-          const refreshTimestamp = formatRefreshTimestamp(new Date());
-          setLastRefreshTimestamp(refreshTimestamp);
-        }
-      } finally {
-        if (!signal?.aborted) {
-          setLoading(false);
+      if (!hasAnySeries && successCount === 0) {
+        const remote = await fetchRemoteFallback(signal);
+        if (remote && typeof remote === 'object') {
+          etfConfig.forEach(({ symbol }) => {
+            const row = remote[symbol];
+            if (row?.prices?.length) {
+              nextData[symbol] = { ...row, symbol };
+            }
+          });
         }
       }
-    },
-    [etfData]
-  );
 
-  // Initial load
+      const refreshDataAsAtDate =
+        mostRecentPriceDate ||
+        etfConfig
+          .map(({ symbol }) => {
+            const p = nextData[symbol]?.prices;
+            return p?.length ? p[p.length - 1].date : null;
+          })
+          .filter(Boolean)
+          .sort()
+          .pop() ||
+        new Date().toISOString().slice(0, 10);
+
+      const refreshTimestamp = formatRefreshTimestamp(new Date());
+      const tsIso = new Date().toISOString();
+      etfConfig.forEach(({ symbol }) => {
+        if (nextData[symbol]) {
+          const p = nextData[symbol].prices;
+          nextData[symbol] = {
+            ...nextData[symbol],
+            dataTimestamp: tsIso,
+            dataAsAtDate: p?.length ? p[p.length - 1].date : refreshDataAsAtDate,
+          };
+        }
+      });
+
+      setEtfData(nextData);
+      saveCachedData(nextData);
+      setErrors(nextErrors);
+      setLastUpdated(refreshDataAsAtDate);
+      setLastRefreshTimestamp(refreshTimestamp);
+    } catch (err) {
+      if (!signal?.aborted) {
+        console.error(err);
+        setErrors({
+          __root:
+            err.message || "Couldn't refresh data. Using cached data. Please try again.",
+        });
+        setLastRefreshTimestamp(formatRefreshTimestamp(new Date()));
+      }
+    } finally {
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+
   useEffect(() => {
     const controller = new AbortController();
     loadData({ signal: controller.signal });
     return () => controller.abort();
-  }, []);
+  }, [loadData]);
 
-  // Auto-refresh every 5 minutes
   useEffect(() => {
     const interval = setInterval(() => {
-      loadData();
-    }, 5 * 60 * 1000); // 5 minutes
-
+      loadDataRef.current();
+    }, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [loadData]);
+  }, []);
 
   const growth = etfConfig.filter((e) => e.group === 'growth');
   const defensive = etfConfig.filter((e) => e.group === 'defensive');
@@ -308,43 +374,58 @@ export default function LiveETFPrices() {
     }
   };
 
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h2 className="text-3xl font-bold text-wb-navy">Market data — ETF prices & returns</h2>
-          <p className="text-slate-600 mt-2">
-            Live market data for educational illustration only (Yahoo Finance via proxy). Not an
-            instruction to buy, sell, or hold. Charts may use cache when live updates fail.
-          </p>
-          <p className="text-sm text-slate-700 mt-3 rounded-lg bg-amber-50/90 border border-amber-200/80 p-3">
-            {PRODUCT_EXAMPLE_NOTICE}
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <span className="text-xs text-gray-500">
-            REFRESHED {lastRefreshTimestamp || 'n/a'}
-          </span>
-          <button
-            onClick={() => loadData()}
-            disabled={loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 text-sm font-medium"
-          >
-            {loading ? 'Refreshing…' : 'Refresh Data'}
-          </button>
-        </div>
-      </div>
+  const dataAsAtLabel = lastUpdated || 'n/a';
 
-      {/* Timeframe Toolbar */}
-      <div className="mb-6 flex gap-2 flex-wrap">
+  return (
+    <div className="space-y-6">
+      <header className="relative overflow-hidden rounded-2xl border border-navy-900/50 bg-gradient-to-br from-navy-900 via-navy-900 to-slate-950 px-5 py-5 md:px-6 md:py-6 shadow-[0_25px_60px_-35px_rgba(15,118,110,0.65)]">
+        <div className="absolute inset-y-0 right-[-40px] w-48 rounded-full bg-teal-500/20 blur-[80px]" />
+        <div className="absolute inset-y-0 left-[-30px] w-36 rounded-full bg-ocean-200/40 blur-[70px]" />
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight bg-gradient-to-r from-teal-200 via-emerald-200 to-ocean-200 bg-clip-text text-transparent leading-tight">
+              Market data — ETF prices & returns
+            </h2>
+            <p className="mt-2 text-xs sm:text-sm text-slate-300/90 max-w-2xl leading-relaxed">
+              Live market data for educational illustration only (Yahoo Finance via proxy). Not an
+              instruction to buy, sell, or hold. Charts use cache or a public fallback dataset if
+              live updates fail.
+            </p>
+            <p className="mt-2 text-[10px] sm:text-[11px] text-slate-400">
+              <span className="uppercase tracking-[0.18em] text-slate-500">Data as at</span>{' '}
+              {dataAsAtLabel}
+            </p>
+          </div>
+          <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500 text-right">
+              Refreshed {lastRefreshTimestamp || 'n/a'}
+            </span>
+            <button
+              type="button"
+              onClick={() => loadData()}
+              disabled={loading}
+              className="inline-flex justify-center items-center rounded-full border border-teal-400/60 bg-teal-400/10 px-4 py-2 text-xs font-semibold text-teal-100 backdrop-blur transition hover:border-teal-300 hover:bg-teal-300/15 disabled:cursor-not-allowed disabled:border-slate-600 disabled:bg-slate-800/60 disabled:text-slate-500"
+            >
+              {loading ? 'Refreshing…' : 'Refresh data'}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <p className="text-sm text-charcoal-800 rounded-xl bg-gold-50/90 border border-gold-200/80 p-3">
+        {PRODUCT_EXAMPLE_NOTICE}
+      </p>
+
+      <div className="flex gap-2 flex-wrap">
         {['YTD', '1Y', '2Y', '5Y', '10Y', 'ALL'].map((tf) => (
           <button
             key={tf}
+            type="button"
             onClick={() => setGlobalTimeframe(tf)}
-            className={`px-4 py-2 rounded-lg font-medium transition ${
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
               globalTimeframe === tf
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ? 'bg-navy-900 text-white shadow-md'
+                : 'bg-white/90 text-navy-800 border border-navy-200/70 hover:bg-ocean-50'
             }`}
           >
             {tf}
@@ -352,15 +433,15 @@ export default function LiveETFPrices() {
         ))}
       </div>
 
-      {/* ETF Cards with Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div>
-          <h3 className="text-xl font-semibold text-gray-900 mb-4">Growth ETFs</h3>
+          <h3 className="text-xl font-semibold text-navy-900 mb-4">Growth ETFs</h3>
           <div className="space-y-4">
             {growth.map((etf) => {
               const data = etfData[etf.symbol];
               const latestPoint = data?.prices?.[data.prices.length - 1];
-              const previousPoint = data?.prices && data.prices.length > 1 ? data.prices[data.prices.length - 2] : null;
+              const previousPoint =
+                data?.prices && data.prices.length > 1 ? data.prices[data.prices.length - 2] : null;
               const latestClose = latestPoint?.close ?? null;
               const dailyPct =
                 latestClose && previousPoint?.close
@@ -370,19 +451,21 @@ export default function LiveETFPrices() {
               return (
                 <div
                   key={etf.symbol}
-                  className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"
+                  className="bg-white border border-navy-200/40 rounded-xl p-4 shadow-sm shadow-navy-900/5"
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <div className="text-sm font-semibold text-gray-900">{etf.symbol}</div>
-                      <div className="text-xs text-gray-600">{etf.name}</div>
+                      <div className="text-sm font-semibold text-navy-900">{etf.symbol}</div>
+                      <div className="text-xs text-charcoal-700">{etf.name}</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-bold text-gray-900">{formatCurrency(latestClose, data?.currency)}</div>
+                      <div className="text-lg font-bold text-navy-900">
+                        {formatCurrency(latestClose, data?.currency)}
+                      </div>
                       {dailyPct !== null && (
                         <div
                           className={`text-xs font-medium ${
-                            dailyPct >= 0 ? 'text-green-600' : 'text-red-600'
+                            dailyPct >= 0 ? 'text-teal-600' : 'text-red-600'
                           }`}
                         >
                           {dailyPct >= 0 ? '+' : ''}
@@ -392,12 +475,20 @@ export default function LiveETFPrices() {
                     </div>
                   </div>
                   {data && data.prices && data.prices.length > 0 ? (
-                    <div className="h-48">
+                    <div
+                      className="h-48 cursor-pointer hover:opacity-90 transition-opacity md:cursor-default"
+                      onClick={() => {
+                        setSelectedETF(etf);
+                        setIsModalOpen(true);
+                      }}
+                      title="Click for detailed chart"
+                      role="presentation"
+                    >
                       <MiniLineChart timeframe={globalTimeframe} data={data} />
                     </div>
                   ) : (
-                    <div className="h-48 flex items-center justify-center text-gray-400 text-sm">
-                      {loading ? 'Loading chart...' : 'Chart data unavailable'}
+                    <div className="h-48 flex items-center justify-center text-slate-400 text-sm">
+                      {loading ? 'Loading chart…' : 'Chart data unavailable'}
                     </div>
                   )}
                 </div>
@@ -407,12 +498,13 @@ export default function LiveETFPrices() {
         </div>
 
         <div>
-          <h3 className="text-xl font-semibold text-gray-900 mb-4">Defensive ETFs</h3>
+          <h3 className="text-xl font-semibold text-navy-900 mb-4">Defensive ETFs</h3>
           <div className="space-y-4">
             {defensive.map((etf) => {
               const data = etfData[etf.symbol];
               const latestPoint = data?.prices?.[data.prices.length - 1];
-              const previousPoint = data?.prices && data.prices.length > 1 ? data.prices[data.prices.length - 2] : null;
+              const previousPoint =
+                data?.prices && data.prices.length > 1 ? data.prices[data.prices.length - 2] : null;
               const latestClose = latestPoint?.close ?? null;
               const dailyPct =
                 latestClose && previousPoint?.close
@@ -422,19 +514,21 @@ export default function LiveETFPrices() {
               return (
                 <div
                   key={etf.symbol}
-                  className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm"
+                  className="bg-white border border-navy-200/40 rounded-xl p-4 shadow-sm shadow-navy-900/5"
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <div className="text-sm font-semibold text-gray-900">{etf.symbol}</div>
-                      <div className="text-xs text-gray-600">{etf.name}</div>
+                      <div className="text-sm font-semibold text-navy-900">{etf.symbol}</div>
+                      <div className="text-xs text-charcoal-700">{etf.name}</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-lg font-bold text-gray-900">{formatCurrency(latestClose, data?.currency)}</div>
+                      <div className="text-lg font-bold text-navy-900">
+                        {formatCurrency(latestClose, data?.currency)}
+                      </div>
                       {dailyPct !== null && (
                         <div
                           className={`text-xs font-medium ${
-                            dailyPct >= 0 ? 'text-green-600' : 'text-red-600'
+                            dailyPct >= 0 ? 'text-teal-600' : 'text-red-600'
                           }`}
                         >
                           {dailyPct >= 0 ? '+' : ''}
@@ -451,12 +545,13 @@ export default function LiveETFPrices() {
                         setIsModalOpen(true);
                       }}
                       title="Click to view detailed chart and ETF information"
+                      role="presentation"
                     >
                       <MiniLineChart timeframe={globalTimeframe} data={data} />
                     </div>
                   ) : (
-                    <div className="h-48 flex items-center justify-center text-gray-400 text-sm">
-                      {loading ? 'Loading chart...' : 'Chart data unavailable'}
+                    <div className="h-48 flex items-center justify-center text-slate-400 text-sm">
+                      {loading ? 'Loading chart…' : 'Chart data unavailable'}
                     </div>
                   )}
                 </div>
@@ -466,19 +561,20 @@ export default function LiveETFPrices() {
         </div>
       </div>
 
-      {/* Performance Table */}
       <PerformanceTable etfData={etfData} etfConfig={etfConfig} />
 
       {Object.keys(errors).length > 0 && (
-        <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <p className="text-sm text-yellow-800">
-            <strong>Note:</strong> Some data could not be refreshed. Using cached/historical data to ensure charts remain populated.
+        <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p className="text-sm text-amber-950">
+            <strong>Note:</strong> Some data could not be refreshed. Cached, fallback, or historical
+            data may be shown so charts stay populated.
           </p>
         </div>
       )}
 
-      <p className="text-xs text-gray-500 text-right mt-4">
-        Source: Yahoo Finance · Data cached for offline viewing · Auto-refreshes every 5 minutes
+      <p className="text-xs text-charcoal-700 text-right">
+        Source: Yahoo Finance (when available) · Fallback: public ETF dashboard dataset · Cached
+        locally · Auto-refresh every 5 minutes
         {lastUpdated && ` · Data as at: ${lastUpdated}`}
       </p>
 
