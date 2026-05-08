@@ -76,7 +76,6 @@ export default function ExampleETFMix() {
   const allocationData = selectedMix.map((etf) => {
     const title = fullEtfName(etf.symbol);
     return {
-      name: `${etf.symbol} — ${title}`,
       shortLabel: etf.symbol,
       fullName: title,
       allocation: etf.allocation,
@@ -168,22 +167,24 @@ export default function ExampleETFMix() {
 
       <div className="bg-slate-50 rounded-2xl p-6 mb-8 border border-slate-100">
         <h3 className="text-lg font-semibold text-wb-navy mb-4">Example weights by holding</h3>
-        <ResponsiveContainer width="100%" height={340}>
-          <BarChart data={allocationData} margin={{ left: 8, right: 16, bottom: 120, top: 8 }}>
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={allocationData} margin={{ left: 8, right: 16, bottom: 40, top: 8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis
-              dataKey="name"
+              dataKey="shortLabel"
               interval={0}
-              angle={-32}
-              textAnchor="end"
-              height={110}
-              tick={{ fontSize: 10 }}
-              tickMargin={8}
+              tick={{ fontSize: 11 }}
+              tickMargin={6}
+              height={36}
             />
             <YAxis width={44} tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} label={{ value: 'Weight %', angle: -90, position: 'insideLeft', style: { fontSize: 11 } }} />
             <Tooltip
               formatter={(value) => [`${value}%`, 'Weight']}
-              labelFormatter={(_label, payload) => payload?.[0]?.payload?.name ?? ''}
+              labelFormatter={(_label, payload) => {
+                const p = payload?.[0]?.payload;
+                if (!p) return '';
+                return p.fullName ? `${p.shortLabel} — ${p.fullName}` : p.shortLabel;
+              }}
             />
             <Legend />
             <Bar dataKey="allocation" fill="#0c4a6e" name="Weight %" />
