@@ -93,6 +93,18 @@ wealth-blueprint-pro/
 - Tax calculations are simplified and should not be used for actual tax planning
 - Investment projections are hypothetical and may not reflect actual outcomes
 
+## Push to GitHub
+
+1. Create a **new empty** repository on GitHub (no README/license), e.g. `NEWWealthblueprint-report`.
+2. In this folder:
+
+```bash
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+git push -u origin main
+```
+
+Use your real GitHub username and repo name. If `origin` already exists, run `git remote set-url origin <url>` instead.
+
 ## License
 
 Educational use only. Not for commercial distribution without proper licensing.
