@@ -5,12 +5,26 @@ import FullReport from './FullReport';
 import { FOOTER_SHORT } from '../constants/disclaimers';
 import { PREPARER_NAME } from '../constants/brand';
 
-/** Reserved at bottom of each page for footer text only (must clear tallest body slice). */
+/** Reserved at bottom of each page for footer text only. */
 const FOOTER_RESERVE_PT = 108;
-/** Gap between bottom of body image and start of footer band. */
 const BODY_FOOTER_GAP_PT = 14;
 const MARGIN_TOP_PT = 28;
 const MARGIN_X_PT = 22;
+/** Space between stacked section images. */
+const SECTION_GAP_PT = 12;
+/** If less than this many pt left on the page, start a new page before placing content. */
+const MIN_TAIL_PT = 28;
+
+function drawCanvasStrip(pdf, canvas, sy, srcH, x, y, destW) {
+  const pageCanvas = document.createElement('canvas');
+  pageCanvas.width = canvas.width;
+  pageCanvas.height = Math.ceil(srcH);
+  const ctx = pageCanvas.getContext('2d');
+  ctx.drawImage(canvas, 0, sy, canvas.width, srcH, 0, 0, pageCanvas.width, pageCanvas.height);
+  const drawH = (srcH * destW) / canvas.width;
+  pdf.addImage(pageCanvas.toDataURL('image/png'), 'PNG', x, y, destW, drawH);
+  return drawH;
+}
 
 export default function PDFExport() {
   const pdfRef = useRef(null);
@@ -65,60 +79,76 @@ export default function PDFExport() {
   const exportPDF = async () => {
     setIsGenerating(true);
     try {
-      const element = pdfRef.current;
-      if (!element) {
+      const root = pdfRef.current;
+      if (!root) {
         alert('Error: Could not find content to export');
         return;
       }
 
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        useCORS: true,
-        logging: false,
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight,
-      });
+      const sectionEls = Array.from(root.querySelectorAll('.report-section'));
+      const targets = sectionEls.length > 0 ? sectionEls : [root];
 
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
       const imgWidth = pageWidth - MARGIN_X_PT * 2;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      const contentHeight =
-        pageHeight - MARGIN_TOP_PT - FOOTER_RESERVE_PT - BODY_FOOTER_GAP_PT;
-      const ratio = imgWidth / canvas.width;
+      const bodyTop = MARGIN_TOP_PT;
+      const bodyBottom = pageHeight - FOOTER_RESERVE_PT - BODY_FOOTER_GAP_PT;
+      const fullColumnPt = bodyBottom - bodyTop;
 
-      if (imgHeight <= contentHeight) {
-        const imgData = canvas.toDataURL('image/png');
-        pdf.addImage(imgData, 'PNG', MARGIN_X_PT, MARGIN_TOP_PT, imgWidth, imgHeight);
-      } else {
-        const sliceHeightPx = contentHeight / ratio;
-        const pageCanvas = document.createElement('canvas');
-        pageCanvas.width = canvas.width;
-        const pageCtx = pageCanvas.getContext('2d');
+      let cursorY = bodyTop;
+
+      const newPage = () => {
+        pdf.addPage();
+        cursorY = bodyTop;
+      };
+
+      for (let ti = 0; ti < targets.length; ti++) {
+        const el = targets[ti];
+        const canvas = await html2canvas(el, {
+          scale: 2,
+          backgroundColor: '#ffffff',
+          useCORS: true,
+          logging: false,
+          width: el.scrollWidth,
+          height: el.scrollHeight,
+          windowWidth: el.scrollWidth,
+          windowHeight: el.scrollHeight,
+        });
+
+        const pxToPt = imgWidth / canvas.width;
         let sy = 0;
+
         while (sy < canvas.height - 0.5) {
-          const srcH = Math.min(sliceHeightPx, canvas.height - sy);
-          pageCanvas.height = Math.ceil(srcH);
-          pageCtx.clearRect(0, 0, pageCanvas.width, pageCanvas.height);
-          pageCtx.drawImage(
-            canvas,
-            0,
-            sy,
-            canvas.width,
-            srcH,
-            0,
-            0,
-            pageCanvas.width,
-            pageCanvas.height
-          );
-          const pageImg = pageCanvas.toDataURL('image/png');
-          const drawH = (srcH * imgWidth) / canvas.width;
-          pdf.addImage(pageImg, 'PNG', MARGIN_X_PT, MARGIN_TOP_PT, imgWidth, drawH);
+          const remainingPx = canvas.height - sy;
+          const remainingPt = remainingPx * pxToPt;
+          let available = bodyBottom - cursorY;
+
+          /* Keep each report section intact when it fits on one page: move to a fresh page if the
+           * tail of the current page is too small for the whole remaining block. */
+          if (remainingPt <= fullColumnPt + 0.5 && available + 0.5 < remainingPt) {
+            newPage();
+            available = bodyBottom - cursorY;
+          }
+
+          if (available < MIN_TAIL_PT) {
+            newPage();
+            available = bodyBottom - cursorY;
+          }
+
+          const maxSrcH = available / pxToPt;
+          const srcH = Math.min(maxSrcH, remainingPx);
+          const drawH = drawCanvasStrip(pdf, canvas, sy, srcH, MARGIN_X_PT, cursorY, imgWidth);
+
+          cursorY += drawH;
           sy += srcH;
-          if (sy < canvas.height - 0.5) pdf.addPage();
+
+          if (sy < canvas.height - 0.5) {
+            newPage();
+          }
         }
+
+        cursorY += SECTION_GAP_PT;
       }
 
       addFootersAndMeta(pdf);
@@ -140,8 +170,8 @@ export default function PDFExport() {
       <div className="mb-6">
         <h2 className="text-3xl font-bold text-wb-navy mb-4">Export PDF</h2>
         <p className="text-slate-600 mb-4">
-          Generate a print-ready Money Coaching & Education Report. The export follows the section
-          order in the report preview, with a short footer on every page.
+          Generate a print-ready Money Coaching & Education Report. Sections are placed page by page
+          so text is not split arbitrarily in the middle of a paragraph.
         </p>
         <button
           type="button"
@@ -165,8 +195,8 @@ export default function PDFExport() {
         <p className="font-semibold text-wb-navy mb-2">Export notes</p>
         <ul className="list-disc pl-5 space-y-1">
           <li>Cover page, education notice, all report sections, and “Before You Act” are included.</li>
-          <li>Each page leaves space below the report image before the disclaimer so text is not covered.</li>
-          <li>For best print layout, use the in-browser print dialog on the Report tab if needed.</li>
+          <li>Each section is rendered separately so page breaks fall between sections, not through lines.</li>
+          <li>Unusually long single sections may still span multiple pages.</li>
         </ul>
       </div>
     </div>
