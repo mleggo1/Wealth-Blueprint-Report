@@ -16,9 +16,20 @@ import {
 } from '../constants/disclaimers';
 import { PRODUCT_NAME, PRODUCT_SUBTITLE, PRODUCT_TAGLINE, PREPARER_NAME } from '../constants/brand';
 import etfMetadataData from '../data/etf-metadata.json';
+import etfListData from '../data/etfs.json';
 import { SCENARIO_LABELS, normalizeEtfMixSaved } from '../data/etfScenarios';
 
 const etfMeta = etfMetadataData;
+const ETF_LIST_NAME = Object.fromEntries(etfListData.map((e) => [e.symbol, e.name]));
+
+function etfFullName(symbol) {
+  if (!symbol) return '';
+  return (
+    ETF_LIST_NAME[symbol] ||
+    etfMeta[symbol]?.description?.split('.')[0]?.trim() ||
+    symbol
+  );
+}
 
 function SectionCard({ id, title, children, banner }) {
   return (
@@ -248,7 +259,7 @@ export default function FullReport({ showScreenChrome = true }) {
                 etfNorm.allocations.map((row) => (
                   <tr key={row.symbol} className="border-t border-slate-100">
                     <td className="p-3">
-                      {row.symbol} — {etfMeta[row.symbol]?.name || ''}
+                      {row.symbol} — {etfFullName(row.symbol)}
                     </td>
                     <td className="p-3 text-right">{row.allocation}%</td>
                   </tr>
